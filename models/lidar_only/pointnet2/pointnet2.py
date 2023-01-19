@@ -176,7 +176,7 @@ class PointNet2SegMSG(nn.Module):
 
 
 if __name__ == '__main__':
-    # mocked lidar points
+    # mocked lidar points (batch, (xyz), num of points)
     xyz = torch.rand(32, 3, 5000)
     # mocked num of clas
     num_class = 7
