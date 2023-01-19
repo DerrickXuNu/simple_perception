@@ -5,6 +5,144 @@ import torch
 import torch.nn as nn
 
 from basic_modules import FFN, constant_init, xavier_init
+from attention_modules import multi_scale_deformable_attn_pytorch
+
+
+class MultiheadAttention(nn.Module):
+    """A wrapper for ``torch.nn.MultiheadAttention``.
+
+    This module implements MultiheadAttention with identity connection,
+    and positional encoding  is also passed as input.
+
+    Args:
+        embed_dims (int): The embedding dimension.
+        num_heads (int): Parallel attention heads.
+        attn_drop (float): A Dropout layer on attn_output_weights.
+            Default: 0.0.
+        proj_drop (float): A Dropout layer after `nn.MultiheadAttention`.
+            Default: 0.0.
+        dropout_layer (obj:`ConfigDict`): The dropout_layer used
+            when adding the shortcut.
+        init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
+            Default: None.
+        batch_first (bool): When it is True,  Key, Query and Value are shape of
+            (batch, n, embed_dim), otherwise (n, batch, embed_dim).
+             Default to False.
+    """
+
+    def __init__(self,
+                 embed_dims,
+                 num_heads,
+                 attn_drop=0.,
+                 proj_drop=0.,
+                 dropout_layer=dict(type='Dropout', drop_prob=0.),
+                 init_cfg=None,
+                 batch_first=False,
+                 **kwargs):
+        super(MultiheadAttention, self).__init__(init_cfg)
+        if 'dropout' in kwargs:
+            attn_drop = kwargs['dropout']
+            dropout_layer['drop_prob'] = kwargs.pop('dropout')
+
+        self.embed_dims = embed_dims
+        self.num_heads = num_heads
+        self.batch_first = batch_first
+
+        self.attn = nn.MultiheadAttention(embed_dims, num_heads, attn_drop,
+                                          **kwargs)
+
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.dropout_layer = nn.Identity()
+
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                identity=None,
+                query_pos=None,
+                key_pos=None,
+                attn_mask=None,
+                key_padding_mask=None,
+                **kwargs):
+        """Forward function for `MultiheadAttention`.
+
+        **kwargs allow passing a more general data flow when combining
+        with other operations in `transformerlayer`.
+
+        Args:
+            query (Tensor): The input query with shape [num_queries, bs,
+                embed_dims] if self.batch_first is False, else
+                [bs, num_queries embed_dims].
+            key (Tensor): The key tensor with shape [num_keys, bs,
+                embed_dims] if self.batch_first is False, else
+                [bs, num_keys, embed_dims] .
+                If None, the ``query`` will be used. Defaults to None.
+            value (Tensor): The value tensor with same shape as `key`.
+                Same in `nn.MultiheadAttention.forward`. Defaults to None.
+                If None, the `key` will be used.
+            identity (Tensor): This tensor, with the same shape as x,
+                will be used for the identity link.
+                If None, `x` will be used. Defaults to None.
+            query_pos (Tensor): The positional encoding for query, with
+                the same shape as `x`. If not None, it will
+                be added to `x` before forward function. Defaults to None.
+            key_pos (Tensor): The positional encoding for `key`, with the
+                same shape as `key`. Defaults to None. If not None, it will
+                be added to `key` before forward function. If None, and
+                `query_pos` has the same shape as `key`, then `query_pos`
+                will be used for `key_pos`. Defaults to None.
+            attn_mask (Tensor): ByteTensor mask with shape [num_queries,
+                num_keys]. Same in `nn.MultiheadAttention.forward`.
+                Defaults to None.
+            key_padding_mask (Tensor): ByteTensor with shape [bs, num_keys].
+                Defaults to None.
+
+        Returns:
+            Tensor: forwarded results with shape
+                [num_queries, bs, embed_dims]
+                if self.batch_first is False, else
+                [bs, num_queries embed_dims].
+        """
+
+        if key is None:
+            key = query
+        if value is None:
+            value = key
+        if identity is None:
+            identity = query
+        if key_pos is None:
+            if query_pos is not None:
+                # use query_pos if key_pos is not available
+                if query_pos.shape == key.shape:
+                    key_pos = query_pos
+
+        if query_pos is not None:
+            query = query + query_pos
+        if key_pos is not None:
+            key = key + key_pos
+
+        # Because the dataflow('key', 'query', 'value') of
+        # ``torch.nn.MultiheadAttention`` is (num_query, batch,
+        # embed_dims), We should adjust the shape of dataflow from
+        # batch_first (batch, num_query, embed_dims) to num_query_first
+        # (num_query ,batch, embed_dims), and recover ``attn_output``
+        # from num_query_first to batch_first.
+        if self.batch_first:
+            query = query.transpose(0, 1)
+            key = key.transpose(0, 1)
+            value = value.transpose(0, 1)
+
+        out = self.attn(
+            query=query,
+            key=key,
+            value=value,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask)[0]
+
+        if self.batch_first:
+            out = out.transpose(0, 1)
+
+        return identity + self.dropout_layer(self.proj_drop(out))
 
 
 class CustomMSDeformableAttention(nn.Module):
@@ -81,9 +219,116 @@ class CustomMSDeformableAttention(nn.Module):
         xavier_init(self.output_proj, distribution='uniform', bias=0.)
         self._is_init = True
 
-    # todo: add it later
-    def forward(self):
-        pass
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                identity=None,
+                query_pos=None,
+                key_padding_mask=None,
+                reference_points=None,
+                spatial_shapes=None,
+                level_start_index=None,
+                flag='decoder',
+                **kwargs):
+        """Forward Function of MultiScaleDeformAttention.
+
+        Args:
+            query (Tensor): Query of Transformer with shape
+                (num_query, bs, embed_dims).
+            key (Tensor): The key tensor with shape
+                `(num_key, bs, embed_dims)`.
+            value (Tensor): The value tensor with shape
+                `(num_key, bs, embed_dims)`.
+            identity (Tensor): The tensor used for addition, with the
+                same shape as `query`. Default None. If None,
+                `query` will be used.
+            query_pos (Tensor): The positional encoding for `query`.
+                Default: None.
+            key_pos (Tensor): The positional encoding for `key`. Default
+                None.
+            reference_points (Tensor):  The normalized reference
+                points with shape (bs, num_query, num_levels, 2),
+                all elements is range in [0, 1], top-left (0,0),
+                bottom-right (1, 1), including padding area.
+                or (N, Length_{query}, num_levels, 4), add
+                additional two dimensions is (w, h) to
+                form reference boxes.
+            key_padding_mask (Tensor): ByteTensor for `query`, with
+                shape [bs, num_key].
+            spatial_shapes (Tensor): Spatial shape of features in
+                different levels. With shape (num_levels, 2),
+                last dimension represents (h, w).
+            level_start_index (Tensor): The start index of each level.
+                A tensor has shape ``(num_levels, )`` and can be represented
+                as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
+
+        Returns:
+             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+        """
+        if value is None:
+            value = query
+
+        if identity is None:
+            identity = query
+        if query_pos is not None:
+            query = query + query_pos
+
+        if not self.batch_first:
+            # change to (bs, num_query ,embed_dims)
+            query = query.permute(1, 0, 2)
+            value = value.permute(1, 0, 2)
+
+        bs, num_query, _ = query.shape
+        bs, num_value, _ = value.shape
+        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
+
+        # values are from the bev embedding
+        # query is the bev query
+        value = self.value_proj(value)
+        if key_padding_mask is not None:
+            value = value.masked_fill(key_padding_mask[..., None], 0.0)
+        value = value.view(bs, num_value, self.num_heads, -1)
+
+        # deformable sampling offset
+        sampling_offsets = self.sampling_offsets(query).view(
+            bs, num_query, self.num_heads, self.num_levels, self.num_points, 2)
+        attention_weights = self.attention_weights(query).view(
+            bs, num_query, self.num_heads, self.num_levels * self.num_points)
+        attention_weights = attention_weights.softmax(-1)
+
+        attention_weights = attention_weights.view(bs, num_query,
+                                                   self.num_heads,
+                                                   self.num_levels,
+                                                   self.num_points)
+        # find the sampling locations
+        if reference_points.shape[-1] == 2:
+            offset_normalizer = torch.stack(
+                [spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
+            sampling_locations = reference_points[:, :, None, :, None, :] \
+                                 + sampling_offsets \
+                                 / offset_normalizer[None, None, None, :, None,
+                                   :]
+        elif reference_points.shape[-1] == 4:
+            sampling_locations = reference_points[:, :, None, :, None, :2] \
+                                 + sampling_offsets / self.num_points \
+                                 * reference_points[:, :, None, :, None, 2:] \
+                                 * 0.5
+        else:
+            raise ValueError(
+                f'Last dim of reference_points must be'
+                f' 2 or 4, but get {reference_points.shape[-1]} instead.')
+
+        output = multi_scale_deformable_attn_pytorch(
+            value, spatial_shapes, sampling_locations, attention_weights)
+        output = self.output_proj(output)
+
+        if not self.batch_first:
+            # (num_query, bs ,embed_dims)
+            output = output.permute(1, 0, 2)
+
+        return self.dropout(output) + identity
+
 
 class BaseTransformerLayer(nn.Module):
     """Base `TransformerLayer` for vision transformer.
@@ -176,7 +421,10 @@ class BaseTransformerLayer(nn.Module):
         for operation_name in operation_order:
             if operation_name in ['self_attn', 'cross_attn']:
                 # todo: modify this later
-                attention = build_attention(attn_cfgs[index])
+                if operation_name == 'self_attn':
+                    attention = MultiheadAttention(**attn_cfgs[index])
+                elif operation_name == 'cross_attn':
+                    attention = CustomMSDeformableAttention(**attn_cfgs[index])
                 # Some custom attentions used as `self_attn`
                 # or `cross_attn` can have different behavior.
                 attention.operation_name = operation_name
