@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from attention_modules import TemporalSelfAttention, SpatialCrossAttention
-from basic_modules import FFN
+from common_modules import FFN
 from geometry_utils import get_reference_points, point_sampling
 
 
@@ -305,9 +305,13 @@ class BEVFormerEncoder(nn.Module):
 
         if prev_bev is not None:
             # when there is already computed bev feature from last timestamp
+            # bs, h*w, c
             prev_bev = prev_bev.permute(1, 0, 2)
+            # bs*2, hw, c
             prev_bev = torch.stack(
                 [prev_bev, bev_query], 1).reshape(bs * 2, len_bev, -1)
+            # the shift_ref_2d is nearly the same as ref_2d as it is really
+            # small
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
                 bs * 2, len_bev, num_bev_level, 2)
         else:
@@ -431,7 +435,12 @@ if __name__ == '__main__':
                             -4.72933290e-01],
                            [0.00000000e+00, 0.00000000e+00, 0.00000000e+00,
                             1.00000000e+00]])]
-
+    # can_bus:
+    #     can_bus[:3] = translation -- regarding the global frame origin
+    #     can_bus[3:7] = rotation -- regarding to the global frame origin in quaternion
+    #     patch_angle = quaternion_yaw(rotation) / np.pi * 180 -- convert the quaternion to degree
+    #     can_bus[-2] = patch_angle / 180 * np.pi
+    #     can_bus[-1] = patch_angle
     can_bus = [0., 0., 0., 0.97147692, 0.97147692, 0.97147692, 0.97147692,
                0.12370334, -0.17086322, 9.71368351, 0.01170966, 0.02093362,
                -0.02357822, 9.00888615, 0., 0., 5.80457608, 0.]

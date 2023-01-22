@@ -3,15 +3,6 @@ This is for those who does not have large GPU but would like to know the
 core part
 """
 
-import numpy as np
-import torch
-
-
-
-
-
-
-
 
 
 if __name__ == '__main__':

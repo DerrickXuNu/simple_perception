@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torchvision.models as models
 
 from geometry_utils import get_reference_points, point_sampling
-from basic_modules import xavier_init, constant_init, FFN
+from common_modules import xavier_init, constant_init, FFN
 
 
 def multi_scale_deformable_attn_pytorch(value, value_spatial_shapes,
@@ -254,6 +254,8 @@ class TemporalSelfAttention(nn.Module):
         _, num_value, _ = value.shape
 
         # shape (bs, h*w, 2c)
+        # the first bs is actually from previous BEV query. So the query
+        # becomes concat(prev_bev, current_bev)
         query = torch.cat([value[:bs], query], -1)
         value = self.value_proj(value)
         # (2*bs, h*w, heads_num, c/heads_num)
@@ -305,7 +307,7 @@ class TemporalSelfAttention(nn.Module):
 
         # apply deformable transformer basic operation
         # output is the weighted sum value from the sampling points from value
-        # shape : ( b, hw, c)
+        # shape : (b*num_bev_queue, hw, c)
         output = multi_scale_deformable_attn_pytorch(
                 value, spatial_shapes, sampling_locations, attention_weights)
         # (bs*num_bev_queue, num_query, embed_dims)-> (num_query, embed_dims, bs*num_bev_queue)
