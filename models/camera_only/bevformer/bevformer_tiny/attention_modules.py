@@ -84,7 +84,8 @@ class LearnedPositionalEncoding(nn.Module):
     def __init__(self,
                  num_feats=128,
                  row_num_embed=50,
-                 col_num_embed=50):
+                 col_num_embed=50,
+                 **kwargs):
 
         super(LearnedPositionalEncoding, self).__init__()
         self.row_embed = nn.Embedding(row_num_embed, num_feats)
@@ -92,7 +93,6 @@ class LearnedPositionalEncoding(nn.Module):
         self.num_feats = num_feats
         self.row_num_embed = row_num_embed
         self.col_num_embed = col_num_embed
-
 
     def forward(self, mask):
         # mask: bev mask, (b, bev_h, bev_w)

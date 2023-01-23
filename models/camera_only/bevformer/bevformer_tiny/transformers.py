@@ -11,10 +11,12 @@ from torch.nn.init import normal_
 
 from torchvision.transforms.functional import rotate
 from encoders import BEVFormerEncoder
-from decoders import DetectionTransformerDecoder, CustomMSDeformableAttention, inverse_sigmoid
-from attention_modules import MSDeformableAttention3D, TemporalSelfAttention, xavier_init, LearnedPositionalEncoding
+from decoders import DetectionTransformerDecoder, CustomMSDeformableAttention, \
+    inverse_sigmoid
+from attention_modules import MSDeformableAttention3D, TemporalSelfAttention, \
+    xavier_init, LearnedPositionalEncoding
 from loss import HungarianAssigner3D, normalize_bbox, FocalLoss, L1Loss
-from common_modules import FFN
+from mocked_data import lidar2img, can_bus
 
 
 def multi_apply(func, *args, **kwargs):
@@ -43,19 +45,24 @@ class PerceptionTransformer(nn.Module):
     """ This includes both deformable encoder and decoder for bevformer.
 
     """
+
     def __init__(self,
-                 num_feature_levels=4, # multi-scale feature levels from FPN
+                 num_feature_levels=4,  # multi-scale feature levels from FPN
                  num_cams=6,
-                 two_stage_num_proposals=300, # this is not used at all
-                 encoder=None, # the BEV encoder configuration, dict
-                 decoder=None, # the BEV decoder configuration, dict
-                 embed_dims=256, # the embedding size
-                 rotate_prev_bev=True, # rotate the bev from previous timestamp based on the rotation angle to align to the same coordinate
-                 use_shift=True, # x,y transplation to move the bev features from different timestamp to the same coordinate system
-                 use_can_bus=True, # whether use the can_bus to project to a high-dimension data
-                 can_bus_norm=True, # whether do normalization on can_bus
-                 use_cams_embeds=True, # todo:
-                 rotate_center=[100, 100], # the rotation center's position in the bev pos
+                 two_stage_num_proposals=300,  # this is not used at all
+                 encoder=None,  # the BEV encoder configuration, dict
+                 decoder=None,  # the BEV decoder configuration, dict
+                 embed_dims=256,  # the embedding size
+                 rotate_prev_bev=True,
+                 # rotate the bev from previous timestamp based on the rotation angle to align to the same coordinate
+                 use_shift=True,
+                 # x,y transplation to move the bev features from different timestamp to the same coordinate system
+                 use_can_bus=True,
+                 # whether use the can_bus to project to a high-dimension data
+                 can_bus_norm=True,  # whether do normalization on can_bus
+                 use_cams_embeds=True,  # todo:
+                 rotate_center=[100, 100],
+                 # the rotation center's position in the bev pos
                  **kwargs):
 
         super(PerceptionTransformer, self).__init__()
@@ -76,7 +83,6 @@ class PerceptionTransformer(nn.Module):
         # initizalize the NN layers
         self.init_layers()
         self.rotate_center = rotate_center
-
 
     def init_layers(self):
         """Initialize layers of the Detr3DTransformer."""
@@ -100,7 +106,8 @@ class PerceptionTransformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
         for m in self.modules():
-            if isinstance(m, MSDeformableAttention3D) or isinstance(m, TemporalSelfAttention) \
+            if isinstance(m, MSDeformableAttention3D) or isinstance(m,
+                                                                    TemporalSelfAttention) \
                     or isinstance(m, CustomMSDeformableAttention):
                 try:
                     m.init_weight()
@@ -113,13 +120,13 @@ class PerceptionTransformer(nn.Module):
 
     def get_bev_features(
             self,
-            mlvl_feats, # multi-scale image features
-            bev_queries, # bev embedding
+            mlvl_feats,  # multi-scale image features
+            bev_queries,  # bev embedding
             bev_h,
             bev_w,
-            grid_length=[0.512, 0.512],# m/pixels
-            bev_pos=None, # bev position embedding
-            prev_bev=None, # bev query from last seconds
+            grid_length=[0.512, 0.512],  # m/pixels
+            bev_pos=None,  # bev position embedding
+            prev_bev=None,  # bev query from last seconds
             **kwargs):
         """
         obtain bev features.
@@ -133,12 +140,13 @@ class PerceptionTransformer(nn.Module):
 
         # obtain rotation angle and shift with ego motion
         delta_x = np.array([each['can_bus'][0]
-                           for each in kwargs['img_metas']])
+                            for each in kwargs['img_metas']])
         delta_y = np.array([each['can_bus'][1]
-                           for each in kwargs['img_metas']])
+                            for each in kwargs['img_metas']])
         # loop the batch
         ego_angle = np.array(
-            [each['can_bus'][-2] / np.pi * 180 for each in kwargs['img_metas']])
+            [each['can_bus'][-2] / np.pi * 180 for each in
+             kwargs['img_metas']])
 
         # the followings are used to
         grid_length_y = grid_length[0]
@@ -149,9 +157,9 @@ class PerceptionTransformer(nn.Module):
 
         # normalized shift in bev space
         shift_y = translation_length * \
-            np.cos(bev_angle / 180 * np.pi) / grid_length_y / bev_h
+                  np.cos(bev_angle / 180 * np.pi) / grid_length_y / bev_h
         shift_x = translation_length * \
-            np.sin(bev_angle / 180 * np.pi) / grid_length_x / bev_w
+                  np.sin(bev_angle / 180 * np.pi) / grid_length_x / bev_w
         shift_y = shift_y * self.use_shift
         shift_x = shift_x * self.use_shift
         # the shift will be applied to the sampling offset to align
@@ -179,56 +187,56 @@ class PerceptionTransformer(nn.Module):
                         bev_h * bev_w, 1, -1)
                     prev_bev[:, i] = tmp_prev_bev[:, 0]
 
-            # add can bus signals
-            # bs, 18
-            can_bus = bev_queries.new_tensor(
-                [each['can_bus'] for each in kwargs['img_metas']])  # [:, :]
-            # bs, c
-            can_bus = self.can_bus_mlp(can_bus)[None, :, :]
-            # this may not be useful from my view
-            bev_queries = bev_queries + can_bus * self.use_can_bus
+        # add can bus signals
+        # bs, 18
+        can_bus = bev_queries.new_tensor(
+            [each['can_bus'] for each in kwargs['img_metas']])  # [:, :]
+        # bs, c
+        can_bus = self.can_bus_mlp(can_bus)[None, :, :]
+        # this may not be useful from my view
+        bev_queries = bev_queries + can_bus * self.use_can_bus
 
-            feat_flatten = []
-            spatial_shapes = []
-            # multi-scale level feature
-            for lvl, feat in enumerate(mlvl_feats):
-                bs, num_cam, c, h, w = feat.shape
-                spatial_shape = (h, w)
-                # num_cam, bs, h*w, c
-                feat = feat.flatten(3).permute(1, 0, 3, 2)
-                if self.use_cams_embeds:
-                    feat = feat + self.cams_embeds[:, None, None, :].to(
-                        feat.dtype)
-                # feature level embedding add to feature
-                feat = feat + self.level_embeds[None,
-                              None, lvl:lvl + 1, :].to(feat.dtype)
-                spatial_shapes.append(spatial_shape)
-                feat_flatten.append(feat)
+        feat_flatten = []
+        spatial_shapes = []
+        # multi-scale level feature
+        for lvl, feat in enumerate(mlvl_feats):
+            bs, num_cam, c, h, w = feat.shape
+            spatial_shape = (h, w)
+            # num_cam, bs, h*w, c
+            feat = feat.flatten(3).permute(1, 0, 3, 2)
+            if self.use_cams_embeds:
+                feat = feat + self.cams_embeds[:, None, None, :].to(
+                    feat.dtype)
+            # feature level embedding add to feature
+            feat = feat + self.level_embeds[None,
+                          None, lvl:lvl + 1, :].to(feat.dtype)
+            spatial_shapes.append(spatial_shape)
+            feat_flatten.append(feat)
 
-            # this is used to know the feature's level as they are concatenated
-            # at the h*w dimension
-            feat_flatten = torch.cat(feat_flatten, 2)
-            spatial_shapes = torch.as_tensor(
-                spatial_shapes, dtype=torch.long, device=bev_pos.device)
-            level_start_index = torch.cat((spatial_shapes.new_zeros(
-                (1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
-            # (num_cam, H*W, bs, embed_dims)
-            feat_flatten = feat_flatten.permute( 0, 2, 1, 3)
-            # temporal and spatial attetion iteratively applied
-            bev_embed = self.encoder(
-                bev_queries,
-                feat_flatten,
-                feat_flatten,
-                bev_h=bev_h,
-                bev_w=bev_w,
-                bev_pos=bev_pos,
-                spatial_shapes=spatial_shapes,
-                level_start_index=level_start_index,
-                prev_bev=prev_bev,
-                shift=shift,
-                **kwargs)
+        # this is used to know the feature's level as they are concatenated
+        # at the h*w dimension
+        feat_flatten = torch.cat(feat_flatten, 2)
+        spatial_shapes = torch.as_tensor(
+            spatial_shapes, dtype=torch.long, device=bev_pos.device)
+        level_start_index = torch.cat((spatial_shapes.new_zeros(
+            (1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
+        # (num_cam, H*W, bs, embed_dims)
+        feat_flatten = feat_flatten.permute(0, 2, 1, 3)
+        # temporal and spatial attetion iteratively applied
+        bev_embed = self.encoder(
+            bev_queries,
+            feat_flatten,
+            feat_flatten,
+            bev_h=bev_h,
+            bev_w=bev_w,
+            bev_pos=bev_pos,
+            spatial_shapes=spatial_shapes,
+            level_start_index=level_start_index,
+            prev_bev=prev_bev,
+            shift=shift,
+            **kwargs)
 
-            return bev_embed
+        return bev_embed
 
     def forward(self,
                 mlvl_feats,
@@ -342,7 +350,8 @@ class NMSFreeCoder:
                  post_center_range=None,
                  max_num=100,
                  score_threshold=None,
-                 num_classes=10):
+                 num_classes=10,
+                 **kwargs):
         self.pc_range = pc_range
         self.voxel_size = voxel_size
         self.post_center_range = post_center_range
@@ -351,7 +360,7 @@ class NMSFreeCoder:
         self.num_classes = num_classes
 
 
-class BEVFormerHead:
+class BEVFormerHead(nn.Module):
     """ Include BEV embedding/pos initizer + PerceptionTransformer +
         cls/regress head + bounding box decoder + loss function.
         I merge the detrhead
@@ -402,7 +411,7 @@ class BEVFormerHead:
                  bev_h=30,
                  bev_w=30,
                  **kwargs):
-
+        super(BEVFormerHead, self).__init__()
         self.bev_h = bev_h
         self.bev_w = bev_w
         self.fp16_enabled = False
@@ -467,6 +476,8 @@ class BEVFormerHead:
         self.transformer = PerceptionTransformer(**transformer)
         self.embed_dims = self.transformer.embed_dims
 
+        self._init_layers()
+
     def _init_layers(self):
         """Initialize classification branch and regression branch of head."""
         cls_branch = []
@@ -508,6 +519,7 @@ class BEVFormerHead:
             self.bev_h * self.bev_w, self.embed_dims)
         self.query_embedding = nn.Embedding(self.num_query,
                                             self.embed_dims * 2)
+
     @staticmethod
     def bias_init_with_prob(prior_prob):
         """initialize conv/fc bias value according to a given probability value."""
@@ -520,7 +532,6 @@ class BEVFormerHead:
         bias_init = self.bias_init_with_prob(0.01)
         for m in self.cls_branches:
             nn.init.constant_(m[-1].bias, bias_init)
-
 
     def forward(self,
                 mlvl_feats,
@@ -619,11 +630,14 @@ class BEVFormerHead:
             tmp[..., 4:5] = tmp[..., 4:5].sigmoid()
             # from normalized scale to the real meters
             tmp[..., 0:1] = (tmp[..., 0:1] * (self.pc_range[3] -
-                             self.pc_range[0]) + self.pc_range[0])
+                                              self.pc_range[0]) +
+                             self.pc_range[0])
             tmp[..., 1:2] = (tmp[..., 1:2] * (self.pc_range[4] -
-                             self.pc_range[1]) + self.pc_range[1])
+                                              self.pc_range[1]) +
+                             self.pc_range[1])
             tmp[..., 4:5] = (tmp[..., 4:5] * (self.pc_range[5] -
-                             self.pc_range[2]) + self.pc_range[2])
+                                              self.pc_range[2]) +
+                             self.pc_range[2])
 
             outputs_coord = tmp
             outputs_classes.append(outputs_class)
@@ -700,7 +714,7 @@ class BEVFormerHead:
         bbox_weights[pos_inds] = 1.0
 
         pos_gt_bboxes = gt_bboxes[pos_assigned_gt_inds, :]
-        bbox_targets[pos_inds] =pos_gt_bboxes
+        bbox_targets[pos_inds] = pos_gt_bboxes
 
         return (labels, label_weights, bbox_targets, bbox_weights,
                 pos_inds, neg_inds)
@@ -794,7 +808,7 @@ class BEVFormerHead:
         cls_scores = cls_scores.reshape(-1, self.cls_out_channels)
         # construct weighted avg_factor to match with the official DETR repo
         cls_avg_factor = num_total_pos * 1.0 + \
-            num_total_neg * self.bg_cls_weight
+                         num_total_neg * self.bg_cls_weight
 
         if self.sync_cls_avg_factor:
             cls_avg_factor = cls_scores.new_tensor([cls_avg_factor])
@@ -811,7 +825,7 @@ class BEVFormerHead:
 
         loss_bbox = self.loss_bbox(
             bbox_preds[isnotnan, :10], normalized_bbox_targets[isnotnan,
-                                                               :10], bbox_weights[isnotnan, :10])
+                                       :10], bbox_weights[isnotnan, :10])
         loss_cls = torch.nan_to_num(loss_cls)
         loss_bbox = torch.nan_to_num(loss_bbox)
 
@@ -859,12 +873,10 @@ class BEVFormerHead:
         num_dec_layers = len(all_cls_scores)
         device = gt_labels_list[0].device
 
+        # gt_bboxes_list shape:
         # [(n, 9)] -> [xc, yc, w, l, zc, h, rot.sin(), rot.cos(), vx]
         # when compute loss, we only compare the first 8 dimension for both
         # prediction and gt
-        gt_bboxes_list = [torch.cat(
-            (gt_bboxes.gravity_center, gt_bboxes.tensor[:, 3:]),
-            dim=1).to(device) for gt_bboxes in gt_bboxes_list]
 
         # copy the gt boxes for num_dec_layers
         all_gt_bboxes_list = [gt_bboxes_list for _ in range(num_dec_layers)]
@@ -894,6 +906,7 @@ class BEVFormerHead:
 
 
 if __name__ == '__main__':
+    # -----------------------Configuration--------------------------------
     # BEVFormer Encoder
     encoder_config = {
         'type': 'BEVFormerEncoder',
@@ -926,7 +939,7 @@ if __name__ == '__main__':
             'feedforward_channels': 512,
             'ffn_dropout': 0.1,
             'operation_order': (
-            'self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm')
+                'self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm')
         }
     }
     # BEVFormer decoder configuration
@@ -952,30 +965,101 @@ if __name__ == '__main__':
             'feedforward_channels': 512,
             'ffn_dropout': 0.1,
             'operation_order': (
-            'self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm')
+                'self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm')
         }
     }
+    # The transformer config
+    transformer = {'type': 'PerceptionTransformer',
+                   # Whether to rotate the previous bev features
+                   # to align them with current BEV feature
+                   'rotate_prev_bev': True,
+                   # Whether to shift the previous bev features
+                   # to align them with current BEV feature
+                   'use_shift': True,
+                   # if true, the ego vehicle's pose and speed info
+                   # will be passed to a mlp and add to the bev embed
+                   'use_can_bus': True,
+                   # this will be used for camera embedding,
+                   # level embedding, initialized reference points for
+                   #
+                   'embed_dims': 256,
+                   'encoder': encoder_config,
+                   'decoder': decoder_config
+                   }
+    # bbx coder, conver the output to bbx format
+    bbx_coder = {'type': 'NMSFreeCoder',
+                 # todo: not quite sure about this
+                 'post_center_range': [-61.2, -61.2, -10.0, 61.2, 61.2,
+                                       10.0],
+                 'pc_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
+                 'max_num': 300,
+                 'voxel_size': [0.2, 0.2, 8], 'num_classes': 10}
+    # this will be added to bev pos, which will be added to bev query
+    positional_encoding = {'type': 'LearnedPositionalEncoding',
+                           'num_feats': 128,
+                           'row_num_embed': 50,
+                           'col_num_embed': 50}
 
-    transformer_config = {'type': 'PerceptionTransformer',
-                          # Whether to rotate the previous bev features
-                          # to align them with current BEV feature
-                          'rotate_prev_bev': True,
-                          # Whether to shift the previous bev features
-                          # to align them with current BEV feature
-                          'use_shift': True,
-                          # if true, the ego vehicle's pose and speed info
-                          # will be passed to a mlp and add to the bev embed
-                          'use_can_bus': True,
-                          # this will be used for camera embedding,
-                          # level embedding, initialized reference points for
-                          #
-                          'embed_dims': 256,
-                          'encoder': encoder_config,
-                          'decoder': decoder_config
-                          }
+    # classification loss
+    loss_cls = {'type': 'FocalLoss', 'use_sigmoid': True, 'gamma': 2.0,
+                'alpha': 0.25,
+                'loss_weight': 2.0}
+    # regression loss
+    loss_bbox = {'type': 'L1Loss', 'loss_weight': 0.25}
 
-    bevhead = BEVFormerHead()
+    # gt assigner (for hungarian matching)
+    assigner = {'type': 'HungarianAssigner3D',
+                'cls_cost': {'type': 'FocalLossCost', 'weight': 2.0},
+                'reg_cost': {'type': 'BBox3DL1Cost', 'weight': 0.25},
+                'iou_cost': {'type': 'IoUCost', 'weight': 0.0},
+                'pc_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]}
+    # training cfg for head
+    train_cfg = {'grid_size': [512, 512, 1],  # acually useless
+                 'voxel_size': [0.2, 0.2, 8],  # actually useless
+                 'point_cloud_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
+                 'out_size_factor': 4,
+                 'assigner': assigner
+                 }
+    test_cfg = None
 
+    cfg = {
+        'type': 'BEVFormerhead',
+        # the bev query size
+        'bev_h': 50,
+        'bev_w': 50,
+        # object query number
+        'num_query': 900,
+        'num_classes': 10,
+        'in_channels': 256,
+        'sync_cls_avg_factor': True,
+        'with_box_refine': True,
+        'as_two_stage': False,
+        'transformer': transformer,
+        'bbox_coder': bbx_coder,
+        'positional_encoding': positional_encoding,
+        'loss_cls': loss_cls,
+        'loss_bbox': loss_bbox,
+        'train_cfg': train_cfg,
+        'test_cfg': test_cfg
+    }
 
+    # -----------------------Mocked Data--------------------------------
+    bs = 1
+    n_gt = 32
+    mlvl_feats = [torch.rand(bs, 6, 256, 15, 25)]
+    img_meta = [{'lidar2img': lidar2img,
+                 'can_bus': can_bus}] * bs
+    prev_bev = torch.rand(bs, 2500, 256)
+    only_bev = False
+    # mocked gt
+    gt_bboxes_3d = [torch.rand(n_gt, 9)] * bs
+    gt_labels_list = [torch.randint(0, 10, (n_gt,))] * bs
 
+    # -----------------------Building Model--------------------------------
+    head = BEVFormerHead(**cfg)
+    # -----------------------Inference--------------------------------------
+    output = head(mlvl_feats, img_meta, prev_bev, only_bev=only_bev)
+    # -----------------------Loss--------------------------------------
+    loss = head.loss(gt_bboxes_3d, gt_labels_list, output, img_metas=img_meta)
 
+    print('passed')

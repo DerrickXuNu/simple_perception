@@ -191,6 +191,7 @@ class CustomMSDeformableAttention(nn.Module):
                  im2col_step=64,
                  dropout=0.1,
                  norm_cfg=None,
+                 batch_first=False,
                  **kwargs):
         super().__init__()
         if embed_dims % num_heads != 0:
@@ -199,6 +200,7 @@ class CustomMSDeformableAttention(nn.Module):
         dim_per_head = embed_dims // num_heads
         self.norm_cfg = norm_cfg
         self.dropout = nn.Dropout(dropout)
+        self.batch_first = batch_first
 
         self.im2col_step = im2col_step
         self.embed_dims = embed_dims

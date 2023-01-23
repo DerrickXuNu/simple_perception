@@ -276,7 +276,7 @@ class FocalLossCost:
                 [-0.1950, -0.1207, -0.2626]])
     """
 
-    def __init__(self, weight=1., alpha=0.25, gamma=2, eps=1e-12):
+    def __init__(self, weight=1., alpha=0.25, gamma=2, eps=1e-12, **kwargs):
         self.weight = weight
         self.alpha = alpha
         self.gamma = gamma
@@ -302,27 +302,14 @@ class FocalLossCost:
         return cls_cost * self.weight
 
 
-class BBoxL1Cost:
-    """BBoxL1Cost.
-
+class BBox3DL1Cost(object):
+    """BBox3DL1Cost.
      Args:
          weight (int | float, optional): loss_weight
-         box_format (str, optional): 'xyxy' for DETR, 'xywh' for Sparse_RCNN
-
-     Examples:
-         # >>> import torch
-         # >>> self = BBoxL1Cost()
-         # >>> bbox_pred = torch.rand(1, 4)
-         # >>> gt_bboxes= torch.FloatTensor([[0, 0, 2, 4], [1, 2, 3, 4]])
-         # >>> factor = torch.tensor([10, 8, 10, 8])
-         # >>> self(bbox_pred, gt_bboxes, factor)
-         tensor([[1.6172, 1.6422]])
     """
 
-    def __init__(self, weight=1., box_format='xyxy'):
+    def __init__(self, weight=1., **kwargs):
         self.weight = weight
-        assert box_format in ['xyxy', 'xywh']
-        self.box_format = box_format
 
     def __call__(self, bbox_pred, gt_bboxes):
         """
@@ -332,14 +319,9 @@ class BBoxL1Cost:
                 [num_query, 4].
             gt_bboxes (Tensor): Ground truth boxes with normalized
                 coordinates (x1, y1, x2, y2). Shape [num_gt, 4].
-
         Returns:
             torch.Tensor: bbox_cost value with weight
         """
-        if self.box_format == 'xywh':
-            gt_bboxes = bbox_xyxy_to_cxcywh(gt_bboxes)
-        elif self.box_format == 'xyxy':
-            bbox_pred = bbox_cxcywh_to_xyxy(bbox_pred)
         bbox_cost = torch.cdist(bbox_pred, gt_bboxes, p=1)
         return bbox_cost * self.weight
 
@@ -361,7 +343,7 @@ class IoUCost:
                 [ 0.1667, -0.5000]])
     """
 
-    def __init__(self, iou_mode='giou', weight=1.):
+    def __init__(self, iou_mode='giou', weight=1., **kwargs):
         self.weight = weight
         self.iou_mode = iou_mode
 
@@ -443,7 +425,8 @@ class FocalLoss(nn.Module):
                  gamma=2.0,
                  alpha=0.25,
                  reduction='mean',
-                 loss_weight=1.0):
+                 loss_weight=1.0,
+                 **kwargs):
         """`Focal Loss <https://arxiv.org/abs/1708.02002>`_
 
         Args:
@@ -535,7 +518,7 @@ class L1Loss(nn.Module):
         loss_weight (float, optional): The weight of loss.
     """
 
-    def __init__(self, reduction='mean', loss_weight=1.0):
+    def __init__(self, reduction='mean', loss_weight=1.0, **kwargs):
         super(L1Loss, self).__init__()
         self.reduction = reduction
         self.loss_weight = loss_weight
@@ -568,7 +551,7 @@ class L1Loss(nn.Module):
             loss = loss * weight
 
         if reduction == 'mean':
-            loss = loss.sum() / avg_factor
+            loss = loss.mean()
         # if reduction is 'none', then do nothing, otherwise raise an error
         elif reduction != 'none':
             raise ValueError(
@@ -667,9 +650,10 @@ class HungarianAssigner3D:
                  cls_cost=dict(type='ClassificationCost', weight=1.),
                  reg_cost=dict(type='BBoxL1Cost', weight=1.0),
                  iou_cost=dict(type='IoUCost', weight=0.0),
-                 pc_range=None):
+                 pc_range=None,
+                 **kwargs):
         self.cls_cost = FocalLossCost(**cls_cost)
-        self.reg_cost = BBoxL1Cost(**reg_cost)
+        self.reg_cost = BBox3DL1Cost(**reg_cost)
         self.iou_cost = IoUCost(**iou_cost)
         self.pc_range = pc_range
 
