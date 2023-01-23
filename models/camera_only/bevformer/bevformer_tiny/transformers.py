@@ -15,7 +15,8 @@ from decoders import DetectionTransformerDecoder, CustomMSDeformableAttention, \
     inverse_sigmoid
 from attention_modules import MSDeformableAttention3D, TemporalSelfAttention, \
     xavier_init, LearnedPositionalEncoding
-from loss import HungarianAssigner3D, normalize_bbox, FocalLoss, L1Loss
+from loss import HungarianAssigner3D, normalize_bbox, FocalLoss, L1Loss, \
+    denormalize_bbox
 from mocked_data import lidar2img, can_bus
 
 
@@ -358,6 +359,95 @@ class NMSFreeCoder:
         self.max_num = max_num
         self.score_threshold = score_threshold
         self.num_classes = num_classes
+
+    def decode_single(self, cls_scores, bbox_preds):
+        """Decode bboxes.
+        Args:
+            cls_scores (Tensor): Outputs from the classification head, \
+                shape [num_query, cls_out_channels]. Note \
+                cls_out_channels should includes background.
+            bbox_preds (Tensor): Outputs from the regression \
+                head with normalized coordinate format (cx, cy, w, l, cz, h, rot_sine, rot_cosine, vx, vy). \
+                Shape [num_query, 9].
+        Returns:
+            list[dict]: Decoded boxes.
+        """
+        max_num = self.max_num
+
+        cls_scores = cls_scores.sigmoid()
+        scores, indexs = cls_scores.view(-1).topk(max_num)
+        labels = indexs % self.num_classes
+        bbox_index = indexs // self.num_classes
+        # max_num, 10
+        bbox_preds = bbox_preds[bbox_index]
+
+        # after denormalize:
+        # cx, cy, w, l, cz, h, rot_sine, rot_cosine, vx, vy ->
+        # cx, cy, cz, w, l, h, rot, vx, vy
+        final_box_preds = denormalize_bbox(bbox_preds, self.pc_range)
+        final_scores = scores
+        final_preds = labels
+
+        # use score threshold
+        if self.score_threshold is not None:
+            thresh_mask = final_scores > self.score_threshold
+            tmp_score = self.score_threshold
+            while thresh_mask.sum() == 0:
+                tmp_score *= 0.9
+                if tmp_score < 0.01:
+                    thresh_mask = final_scores > -1
+                    break
+                thresh_mask = final_scores >= tmp_score
+
+        # filter out the bbx out of prediction range
+        if self.post_center_range is not None:
+            self.post_center_range = torch.tensor(
+                self.post_center_range, device=scores.device)
+            mask = (final_box_preds[..., :3] >=
+                    self.post_center_range[:3]).all(1)
+            mask &= (final_box_preds[..., :3] <=
+                     self.post_center_range[3:]).all(1)
+
+            if self.score_threshold:
+                mask &= thresh_mask
+
+            boxes3d = final_box_preds[mask]
+            scores = final_scores[mask]
+
+            labels = final_preds[mask]
+            predictions_dict = {
+                'bboxes': boxes3d,
+                'scores': scores,
+                'labels': labels
+            }
+
+        else:
+            raise NotImplementedError(
+                'Need to reorganize output as a batch, only '
+                'support post_center_range is not None for now!')
+        return predictions_dict
+
+    def decode(self, preds_dicts):
+        """Decode bboxes.
+        Args:
+            all_cls_scores (Tensor): Outputs from the classification head, \
+                shape [nb_dec, bs, num_query, cls_out_channels]. Note \
+                cls_out_channels should includes background.
+            all_bbox_preds (Tensor): Sigmoid outputs from the regression \
+                head with normalized coordinate format (cx, cy, w, l, cz, h, rot_sine, rot_cosine, vx, vy). \
+                Shape [nb_dec, bs, num_query, 9].
+        Returns:
+            list[dict]: Decoded boxes.
+        """
+        all_cls_scores = preds_dicts['all_cls_scores'][-1]
+        all_bbox_preds = preds_dicts['all_bbox_preds'][-1]
+
+        batch_size = all_cls_scores.size()[0]
+        predictions_list = []
+        for i in range(batch_size):
+            predictions_list.append(
+                self.decode_single(all_cls_scores[i], all_bbox_preds[i]))
+        return predictions_list
 
 
 class BEVFormerHead(nn.Module):
@@ -874,7 +964,7 @@ class BEVFormerHead(nn.Module):
         device = gt_labels_list[0].device
 
         # gt_bboxes_list shape:
-        # [(n, 9)] -> [xc, yc, w, l, zc, h, rot.sin(), rot.cos(), vx]
+        # [(n, 9)] -> [xc, yc, w, l, zc, h, rot, vx, vy]
         # when compute loss, we only compare the first 8 dimension for both
         # prediction and gt
 
@@ -903,6 +993,34 @@ class BEVFormerHead(nn.Module):
             loss_dict[f'd{num_dec_layer}.loss_bbox'] = loss_bbox_i
 
         return loss_dict
+
+    def get_bboxes(self, preds_dicts, img_metas, rescale=False):
+        """Generate bboxes from bbox head predictions.
+        Args:
+            preds_dicts (tuple[list[dict]]): Prediction results.
+            img_metas (list[dict]): Point cloud and image's meta info.
+        Returns:
+            list[dict]: Decoded bbox, scores and labels after nms.
+        """
+        # list of dictionary that contains: bbox pred, pred labels, and score
+        preds_dicts = self.bbox_coder.decode(preds_dicts)
+
+        num_samples = len(preds_dicts)
+        ret_list = []
+
+        for i in range(num_samples):
+            preds = preds_dicts[i]
+            # after denormalize:
+            # cx, cy, w, l, cz, h, rot_sine, rot_cosine, vx, vy ->
+            # cx, cy, cz, w, l, h, rot, vx, vy
+            bboxes = preds['bboxes']
+            scores = preds['scores']
+            labels = preds['labels']
+
+            ret_list.append([bboxes, scores, labels])
+
+        return ret_list
+
 
 
 if __name__ == '__main__':
@@ -1059,6 +1177,7 @@ if __name__ == '__main__':
     head = BEVFormerHead(**cfg)
     # -----------------------Inference--------------------------------------
     output = head(mlvl_feats, img_meta, prev_bev, only_bev=only_bev)
+    ret_list = head.get_bboxes(output, img_meta)
     # -----------------------Loss--------------------------------------
     loss = head.loss(gt_bboxes_3d, gt_labels_list, output, img_metas=img_meta)
 
