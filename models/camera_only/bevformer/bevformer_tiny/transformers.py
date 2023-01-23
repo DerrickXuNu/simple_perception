@@ -15,7 +15,8 @@ from decoders import DetectionTransformerDecoder, CustomMSDeformableAttention, \
     inverse_sigmoid
 from attention_modules import MSDeformableAttention3D, TemporalSelfAttention, \
     xavier_init, LearnedPositionalEncoding
-from loss import HungarianAssigner3D, normalize_bbox, FocalLoss, L1Loss
+from loss import HungarianAssigner3D, normalize_bbox, denormalize_bbox, \
+    FocalLoss, L1Loss, NMSFreeCoder
 from mocked_data import lidar2img, can_bus
 
 
@@ -331,33 +332,6 @@ class PerceptionTransformer(nn.Module):
         inter_references_out = inter_references
 
         return bev_embed, inter_states, init_reference_out, inter_references_out
-
-
-class NMSFreeCoder:
-    """Bbox coder for NMS-free detector.
-    Args:
-        pc_range (list[float]): BEV Range.
-        post_center_range (list[float]): Limit of the center.
-            Default: None.
-        max_num (int): Max number to be kept. Default: 100.
-        score_threshold (float): Threshold to filter boxes based on score.
-            Default: None.
-    """
-
-    def __init__(self,
-                 pc_range,
-                 voxel_size=None,
-                 post_center_range=None,
-                 max_num=100,
-                 score_threshold=None,
-                 num_classes=10,
-                 **kwargs):
-        self.pc_range = pc_range
-        self.voxel_size = voxel_size
-        self.post_center_range = post_center_range
-        self.max_num = max_num
-        self.score_threshold = score_threshold
-        self.num_classes = num_classes
 
 
 class BEVFormerHead(nn.Module):
@@ -874,7 +848,7 @@ class BEVFormerHead(nn.Module):
         device = gt_labels_list[0].device
 
         # gt_bboxes_list shape:
-        # [(n, 9)] -> [xc, yc, w, l, zc, h, rot.sin(), rot.cos(), vx]
+        # [(n, 9)] -> [xc, yc, w, l, zc, h, rot, vx, vy]
         # when compute loss, we only compare the first 8 dimension for both
         # prediction and gt
 
@@ -904,6 +878,32 @@ class BEVFormerHead(nn.Module):
 
         return loss_dict
 
+    def get_bboxes(self, preds_dicts, img_metas, rescale=False):
+        """Generate bboxes from bbox head predictions.
+        Args:
+            preds_dicts (tuple[list[dict]]): Prediction results.
+            img_metas (list[dict]): Point cloud and image's meta info.
+        Returns:
+            list[dict]: Decoded bbox, scores and labels after nms.
+        """
+        # list of dictionary that contains: bbox pred, pred labels, and score
+        preds_dicts = self.bbox_coder.decode(preds_dicts)
+
+        num_samples = len(preds_dicts)
+        ret_list = []
+
+        for i in range(num_samples):
+            preds = preds_dicts[i]
+            # after denormalize:
+            # cx, cy, w, l, cz, h, rot_sine, rot_cosine, vx, vy ->
+            # cx, cy, cz, w, l, h, rot, vx, vy
+            bboxes = preds['bboxes']
+            scores = preds['scores']
+            labels = preds['labels']
+
+            ret_list.append([bboxes, scores, labels])
+
+        return ret_list
 
 if __name__ == '__main__':
     # -----------------------Configuration--------------------------------
@@ -993,6 +993,7 @@ if __name__ == '__main__':
                                        10.0],
                  'pc_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
                  'max_num': 300,
+                 'score_threshold': 0.5,
                  'voxel_size': [0.2, 0.2, 8], 'num_classes': 10}
     # this will be added to bev pos, which will be added to bev query
     positional_encoding = {'type': 'LearnedPositionalEncoding',
@@ -1059,6 +1060,7 @@ if __name__ == '__main__':
     head = BEVFormerHead(**cfg)
     # -----------------------Inference--------------------------------------
     output = head(mlvl_feats, img_meta, prev_bev, only_bev=only_bev)
+    ret_list = head.get_bboxes(output, img_meta)
     # -----------------------Loss--------------------------------------
     loss = head.loss(gt_bboxes_3d, gt_labels_list, output, img_metas=img_meta)
 
