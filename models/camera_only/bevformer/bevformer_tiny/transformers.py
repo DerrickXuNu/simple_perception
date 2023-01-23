@@ -17,7 +17,7 @@ from attention_modules import MSDeformableAttention3D, TemporalSelfAttention, \
     xavier_init, LearnedPositionalEncoding
 from loss import HungarianAssigner3D, normalize_bbox, denormalize_bbox, \
     FocalLoss, L1Loss, NMSFreeCoder
-from mocked_data import lidar2img, can_bus
+from mocked_img_meta import lidar2img, can_bus
 
 
 def multi_apply(func, *args, **kwargs):
@@ -875,7 +875,7 @@ class BEVFormerHead(nn.Module):
                                            losses_bbox[:-1]):
             loss_dict[f'd{num_dec_layer}.loss_cls'] = loss_cls_i
             loss_dict[f'd{num_dec_layer}.loss_bbox'] = loss_bbox_i
-
+            num_dec_layer += 1
         return loss_dict
 
     def get_bboxes(self, preds_dicts, img_metas, rescale=False):
@@ -904,164 +904,3 @@ class BEVFormerHead(nn.Module):
             ret_list.append([bboxes, scores, labels])
 
         return ret_list
-
-if __name__ == '__main__':
-    # -----------------------Configuration--------------------------------
-    # BEVFormer Encoder
-    encoder_config = {
-        'type': 'BEVFormerEncoder',
-        'num_layers': 3,
-        # the bev evaluation range in meters
-        'pc_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
-        # we sample 4 points in pillar on the z-axis
-        'num_points_in_pillar': 4,
-        'return_intermediate': False,
-        'transformerlayers': {
-            'type': 'BEVFormerLayer',
-            'attn_cfgs': [
-                {
-                    'type': 'TemporalSelfAttention',
-                    'embed_dims': 256,
-                    'num_levels': 1
-                },
-                {
-                    'type': 'SpatialCrossAttention',
-                    'pc_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
-                    'deformable_attention': {
-                        'type': 'MSDeformableAttention3D',
-                        'embed_dims': 256,
-                        'num_points': 8,
-                        'num_levels': 1
-                    },
-                    'embed_dims': 256
-                }
-            ],
-            'feedforward_channels': 512,
-            'ffn_dropout': 0.1,
-            'operation_order': (
-                'self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm')
-        }
-    }
-    # BEVFormer decoder configuration
-    decoder_config = {
-        'type': 'DetectionTransformerDecoder',
-        'num_layers': 6,
-        'return_intermediate': True,
-        'transformerlayers': {
-            'type': 'DetrTransformerDecoderLayer',
-            'attn_cfgs': [
-                {
-                    'type': 'MultiheadAttention',
-                    'embed_dims': 256,
-                    'num_heads': 8,
-                    'dropout': 0.1
-                },
-                {
-                    'type': 'CustomMSDeformableAttention',
-                    'embed_dims': 256,
-                    'num_levels': 1
-                }
-            ],
-            'feedforward_channels': 512,
-            'ffn_dropout': 0.1,
-            'operation_order': (
-                'self_attn', 'norm', 'cross_attn', 'norm', 'ffn', 'norm')
-        }
-    }
-    # The transformer config
-    transformer = {'type': 'PerceptionTransformer',
-                   # Whether to rotate the previous bev features
-                   # to align them with current BEV feature
-                   'rotate_prev_bev': True,
-                   # Whether to shift the previous bev features
-                   # to align them with current BEV feature
-                   'use_shift': True,
-                   # if true, the ego vehicle's pose and speed info
-                   # will be passed to a mlp and add to the bev embed
-                   'use_can_bus': True,
-                   # this will be used for camera embedding,
-                   # level embedding, initialized reference points for
-                   #
-                   'embed_dims': 256,
-                   'encoder': encoder_config,
-                   'decoder': decoder_config
-                   }
-    # bbx coder, conver the output to bbx format
-    bbx_coder = {'type': 'NMSFreeCoder',
-                 # todo: not quite sure about this
-                 'post_center_range': [-61.2, -61.2, -10.0, 61.2, 61.2,
-                                       10.0],
-                 'pc_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
-                 'max_num': 300,
-                 'score_threshold': 0.5,
-                 'voxel_size': [0.2, 0.2, 8], 'num_classes': 10}
-    # this will be added to bev pos, which will be added to bev query
-    positional_encoding = {'type': 'LearnedPositionalEncoding',
-                           'num_feats': 128,
-                           'row_num_embed': 50,
-                           'col_num_embed': 50}
-
-    # classification loss
-    loss_cls = {'type': 'FocalLoss', 'use_sigmoid': True, 'gamma': 2.0,
-                'alpha': 0.25,
-                'loss_weight': 2.0}
-    # regression loss
-    loss_bbox = {'type': 'L1Loss', 'loss_weight': 0.25}
-
-    # gt assigner (for hungarian matching)
-    assigner = {'type': 'HungarianAssigner3D',
-                'cls_cost': {'type': 'FocalLossCost', 'weight': 2.0},
-                'reg_cost': {'type': 'BBox3DL1Cost', 'weight': 0.25},
-                'iou_cost': {'type': 'IoUCost', 'weight': 0.0},
-                'pc_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]}
-    # training cfg for head
-    train_cfg = {'grid_size': [512, 512, 1],  # acually useless
-                 'voxel_size': [0.2, 0.2, 8],  # actually useless
-                 'point_cloud_range': [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
-                 'out_size_factor': 4,
-                 'assigner': assigner
-                 }
-    test_cfg = None
-
-    cfg = {
-        'type': 'BEVFormerhead',
-        # the bev query size
-        'bev_h': 50,
-        'bev_w': 50,
-        # object query number
-        'num_query': 900,
-        'num_classes': 10,
-        'in_channels': 256,
-        'sync_cls_avg_factor': True,
-        'with_box_refine': True,
-        'as_two_stage': False,
-        'transformer': transformer,
-        'bbox_coder': bbx_coder,
-        'positional_encoding': positional_encoding,
-        'loss_cls': loss_cls,
-        'loss_bbox': loss_bbox,
-        'train_cfg': train_cfg,
-        'test_cfg': test_cfg
-    }
-
-    # -----------------------Mocked Data--------------------------------
-    bs = 1
-    n_gt = 32
-    mlvl_feats = [torch.rand(bs, 6, 256, 15, 25)]
-    img_meta = [{'lidar2img': lidar2img,
-                 'can_bus': can_bus}] * bs
-    prev_bev = torch.rand(bs, 2500, 256)
-    only_bev = False
-    # mocked gt
-    gt_bboxes_3d = [torch.rand(n_gt, 9)] * bs
-    gt_labels_list = [torch.randint(0, 10, (n_gt,))] * bs
-
-    # -----------------------Building Model--------------------------------
-    head = BEVFormerHead(**cfg)
-    # -----------------------Inference--------------------------------------
-    output = head(mlvl_feats, img_meta, prev_bev, only_bev=only_bev)
-    ret_list = head.get_bboxes(output, img_meta)
-    # -----------------------Loss--------------------------------------
-    loss = head.loss(gt_bboxes_3d, gt_labels_list, output, img_metas=img_meta)
-
-    print('passed')

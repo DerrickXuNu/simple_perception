@@ -82,13 +82,14 @@ class ResnetEncoder(nn.Module):
         x = self.encoder.layer2(x)
         x = self.encoder.layer3(x)
         x = self.encoder.layer4(x)
-        # the original implementation only return the last stage feature
-        return tuple(x)
+        # the BEVFormer tiny only return the last stage feature
+        return [x]
 
 
 class FPN(nn.Module):
     """
-    FPN as image neck in BEVFormer Tiny to augment feature.
+    FPN as image neck in BEVFormer Tiny to augment feature. Bevformer tiny
+    only has a single scale,
 
     Parameters
     ----------
@@ -142,7 +143,6 @@ class FPN(nn.Module):
 
         # for bevformer bass version there should be extra convs. But here
         # miny version just directly the output
-
         return tuple(outs)
 
 
