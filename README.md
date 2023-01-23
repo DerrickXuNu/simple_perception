@@ -58,7 +58,8 @@ loss = bevformer(train=True, **data_dict)
 output = bevformer(train=False, **data_dict)
 
 ```
-
+## Acknoledgement
+Most of the codes are from the official implementations, and I re-organize them in a easy-to-understand manner. The demo figure is from the paper [DeepInteraction](https://arxiv.org/pdf/2208.11112v2.pdf).
 ## Citations
 ```shell
 @article{li2022bevformer,
