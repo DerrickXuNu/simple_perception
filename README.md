@@ -1,4 +1,6 @@
 # Simple Perception for Autonomous Driving
+![](imgs/example.png)
+
 Are you tired of struggling to understand complex and messy codebase of perception algorithms? Are you frustrated by the overwhelming amount of dependencies and large datasets required just to get started? Have you ever felt lost trying to use a piece of code in a perception model?
 
 **Simple-perception** is the solution you've been searching for. This repository offers a streamlined and straightforward implementation of various perception algorithms, specifically tailored for AV applications. 
