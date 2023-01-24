@@ -7,7 +7,7 @@
 - [x] Reorganize the SOTA AV perception algorithms in a streamlined and straightfoward way
 - [x] No complicated class inheritance, datasetclass,nor runner/hooking, just pure algorithm. 
 - [x] Only pytorch is required as dependency. 
-= [x] You don't even need a gpu to run simple-perception.
+- [x] You don't even need a gpu to run simple-perception.
 - [x] No need to download any dataset to run a model. Simple mocked data is used
 - [x] Very detailed comments for each line of code to help understand SOTA better
 
