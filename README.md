@@ -1,17 +1,13 @@
 # Simple Perception for Autonomous Driving
 ![](imgs/example.png)
 
-Are you tired of struggling to understand complex and messy codebase of perception algorithms? Are you frustrated by the overwhelming amount of dependencies and large datasets required just to get started? Have you ever felt lost trying to use a piece of code in a perception model?
-
-**Simple-perception** is the solution you've been searching for. This repository offers a streamlined and straightforward implementation of various perception algorithms, specifically tailored for AV applications. 
-
-Whether you're a beginner or an experienced researcher, whether you want to learn a SOTA algorithm fast or quickly find the correct piece of code to
-integrate to your own pipeline, Simple-perception is an excellent choice.
+**Simple-perception** offers simple and easy-to-understand implementations of various SOTA 3D object detection algorithms for autonomous driving. The codebase is well-organized and easy to navigate, with clear documentation and minimal dependencies. Whether you're a beginner or an experienced researcher, whether you want to learn a SOTA algorithm fast or quickly find the correct piece of code to integrate to your own pipeline, Simple-perception is an excellent choice.
 
 ## Features
 - [x] Reorganize the SOTA AV perception algorithms in a streamlined and straightfoward way
 - [x] No complicated class inheritance, datasetclass,nor runner/hooking, just pure algorithm. 
-- [x] Only pytorch is required. You don't even need a gpu.
+- [x] Only pytorch is required as dependency. 
+= [x] You don't even need a gpu to run simple-perception.
 - [x] No need to download any dataset to run a model. Simple mocked data is used
 - [x] Very detailed comments for each line of code to help understand SOTA better
 
