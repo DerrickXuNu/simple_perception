@@ -652,7 +652,6 @@ class AssignResult:
             self.labels = torch.cat([gt_labels, self.labels])
 
 
-
 class HungarianAssigner3D:
     """Computes one-to-one matching between predictions and ground truth.
     This class computes an assignment between the targets and the predictions

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from loss import NMSFreeCoder
+from loss import NMSFreeCoder, HungarianAssigner3D, FocalLoss, L1Loss
 
 
 class UVTRHead(nn.Module):
@@ -19,10 +19,6 @@ class UVTRHead(nn.Module):
                  bbox_coder=None, # NMSfree box coder for Hungarian match
                  num_cls_fcs=2, # todo: seems not used
                  code_weights=None, # for bounding box prediction, [x, y, z, w, h, l, rot_x, rot_y, vx, vy]
-                 positional_encoding=dict(
-                     type='SinePositionalEncoding',
-                     num_feats=128,
-                     normalize=True), #
                  loss_cls=dict(
                      type='CrossEntropyLoss',
                      bg_cls_weight=0.1,
@@ -30,7 +26,6 @@ class UVTRHead(nn.Module):
                      loss_weight=1.0,
                      class_weight=1.0),
                  loss_bbox=dict(type='L1Loss', loss_weight=5.0),
-                 loss_iou=dict(type='GIoULoss', loss_weight=2.0),
                  train_cfg=dict(
                      assigner=dict(
                          type='HungarianAssigner',
@@ -38,6 +33,7 @@ class UVTRHead(nn.Module):
                          reg_cost=dict(type='BBoxL1Cost', weight=5.0),
                          iou_cost=dict(
                              type='IoUCost', iou_mode='giou', weight=2.0))),
+                 test_cfg=dict(max_per_img=100),
                  **kwargs):
         super(UVTRHead, self).__init__()
 
@@ -55,5 +51,28 @@ class UVTRHead(nn.Module):
             # HungarianAssigner for training
             assigner = train_cfg['assigner']
             self.assigner = HungarianAssigner3D(**assigner)
+
+        # the object query number
+        self.num_query = num_query
+        # default 10
+        self.num_classes = num_classes
+        self.in_channels = in_channels
+        # regression layer number
+        self.num_reg_fcs = num_reg_fcs
+        self.train_cfg = train_cfg
+        self.test_cfg = test_cfg
+
+        # notice: I simplified the cost functions
+        # the original implemation is FocalLoss, L1Loss, and GIoU Loss,
+        # which could have better performance
+        self.loss_cls = FocalLoss(**loss_cls)
+        self.loss_bbox = L1Loss(**loss_bbox)
+
+        self.cls_out_channels = num_classes
+        self.activate = nn.ReLU(inplace=True)
+        # todo:transformer
+
+
+
 
 
