@@ -24,6 +24,12 @@ def constant_init(module, val, bias=0):
         nn.init.constant_(module.bias, bias)
 
 
+def bias_init_with_prob(prior_prob):
+    """initialize conv/fc bias value according to a given probability value."""
+    bias_init = float(-np.log((1 - prior_prob) / prior_prob))
+    return bias_init
+
+
 class FFN(nn.Module):
     """Implements feed-forward networks (FFNs) with identity connection.
 
@@ -55,7 +61,7 @@ class FFN(nn.Module):
                  **kwargs):
         super(FFN, self).__init__()
         assert num_fcs >= 2, 'num_fcs should be no less ' \
-            f'than 2. got {num_fcs}.'
+                             f'than 2. got {num_fcs}.'
         self.embed_dims = embed_dims
         self.feedforward_channels = feedforward_channels
         self.num_fcs = num_fcs
@@ -89,4 +95,3 @@ class FFN(nn.Module):
         if identity is None:
             identity = x
         return identity + self.dropout_layer(out)
-

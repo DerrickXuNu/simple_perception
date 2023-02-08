@@ -3,7 +3,7 @@ import copy
 import torch.nn as nn
 
 from attention_modules import MultiheadAttention, UniCrossAtten
-from common_modules import FFN
+from common_modules import FFN, xavier_init
 
 
 class BaseTransformerLayer(nn.Module):
@@ -72,10 +72,10 @@ class BaseTransformerLayer(nn.Module):
 
         assert set(operation_order) & set(
             ['self_attn', 'norm', 'ffn', 'cross_attn']) == \
-            set(operation_order), f'The operation_order of' \
-            f' {self.__class__.__name__} should ' \
-            f'contains all four operation type ' \
-            f"{['self_attn', 'norm', 'ffn', 'cross_attn']}"
+               set(operation_order), f'The operation_order of' \
+                                     f' {self.__class__.__name__} should ' \
+                                     f'contains all four operation type ' \
+                                     f"{['self_attn', 'norm', 'ffn', 'cross_attn']}"
 
         num_attn = operation_order.count('self_attn') + operation_order.count(
             'cross_attn')
@@ -83,9 +83,9 @@ class BaseTransformerLayer(nn.Module):
             attn_cfgs = [copy.deepcopy(attn_cfgs) for _ in range(num_attn)]
         else:
             assert num_attn == len(attn_cfgs), f'The length ' \
-                f'of attn_cfg {num_attn} is ' \
-                f'not consistent with the number of attention' \
-                f'in operation_order {operation_order}.'
+                                               f'of attn_cfg {num_attn} is ' \
+                                               f'not consistent with the number of attention' \
+                                               f'in operation_order {operation_order}.'
 
         self.num_attn = num_attn
         self.operation_order = operation_order
@@ -180,9 +180,9 @@ class BaseTransformerLayer(nn.Module):
             ]
         else:
             assert len(attn_masks) == self.num_attn, f'The length of ' \
-                        f'attn_masks {len(attn_masks)} must be equal ' \
-                        f'to the number of attention in ' \
-                        f'operation_order {self.num_attn}'
+                                                     f'attn_masks {len(attn_masks)} must be equal ' \
+                                                     f'to the number of attention in ' \
+                                                     f'operation_order {self.num_attn}'
 
         for layer in self.operation_order:
             if layer == 'self_attn':
@@ -294,8 +294,11 @@ class UniTransformerDecoder(nn.Module):
                 # tmp: (cx, cy, w, l, cz, h, rot_sine, rot_cosine, vx, vy)
                 new_reference_points = torch.zeros_like(reference_points)
                 # add the new prediction's cx,cy,cz to the origin reference points
-                new_reference_points[..., :2] = tmp[..., :2] + reference_points[..., :2]
-                new_reference_points[..., 2:3] = tmp[..., 4:5] + reference_points[..., 2:3]
+                new_reference_points[..., :2] = tmp[...,
+                                                :2] + reference_points[..., :2]
+                new_reference_points[..., 2:3] = tmp[...,
+                                                 4:5] + reference_points[...,
+                                                        2:3]
                 reference_points = new_reference_points.detach()
 
                 output = output.permute(1, 0, 2)
@@ -309,3 +312,76 @@ class UniTransformerDecoder(nn.Module):
                 intermediate_reference_points)
 
         return output, reference_points
+
+
+class Uni3DDETR(nn.Module):
+    """
+    Implements the UVTR transformer. It contains a series of decoder.
+    """
+
+    def __init__(self,
+                 num_feature_levels=4,
+                 num_cams=6,
+                 two_stage_num_proposals=300,
+                 decoder=None,
+                 fp16_enabled=False,
+                 **kwargs):
+        super(Uni3DDETR, self).__init__()
+        self.decoder = UniTransformerDecoder(**decoder)
+        self.embed_dims = self.decoder.embed_dims
+        self.num_feature_levels = num_feature_levels
+        self.num_cams = num_cams
+        self.two_stage_num_proposals = two_stage_num_proposals
+
+    def init_layers(self):
+        self.reference_points = nn.Linear(self.embed_dims, 3)
+
+    def init_weights(self):
+        """Initialize the transformer weights."""
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+        for m in self.modules():
+            if isinstance(m, UniCrossAtten):
+                m.init_weight()
+        xavier_init(self.reference_points, distribution='uniform', bias=0.)
+
+    def forward(self,
+                pts_value,  # point cloud BEV feature
+                img_value,  # image BEV feature
+                query_embed,  # object query
+                reg_branches=None,
+                **kwargs):
+
+        assert query_embed is not None
+        if img_value is not None:
+            bs = img_value.shape[0]
+        else:
+            bs = pts_value.shape[0]
+
+        # split object query embedding to position and query itself
+        query_pos, query = torch.split(query_embed, self.embed_dims, dim=1)
+        # bs, num_query, c
+        query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)
+        query = query.unsqueeze(0).expand(bs, -1, -1)
+        # bs, num_query, 3
+        reference_points = self.reference_points(query_pos)
+        # make the initipoint normalized
+        init_reference_out = reference_points.sigmoid()
+
+        # decoder
+        query = query.permute(1, 0, 2)
+        query_pos = query_pos.permute(1, 0, 2)
+        value = {'pts_value': pts_value,
+                 'img_value': img_value}
+        inter_states, inter_references = self.decoder(
+            query=query,
+            key=None,
+            value=value,
+            query_pos=query_pos,
+            reference_points=reference_points,
+            reg_branches=reg_branches,
+            **kwargs)
+
+        inter_references_out = inter_references.sigmoid()
+        return inter_states, inter_references, inter_references_out
