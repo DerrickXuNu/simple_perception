@@ -126,7 +126,7 @@ class FPN(nn.Module):
 
         # build top-down path
         used_backbone_levels = len(laterals)
-        # we will actually go into this for loop since it is single scale
+        # we will actually not go into this for loop since it is single scale
         # for bevformer tiny. But it is still good to show
         for i in range(used_backbone_levels - 1, 0, -1):
             # In some cases, fixing `scale factor` (e.g. 2) is preferred, but
