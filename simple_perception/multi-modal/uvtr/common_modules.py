@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
-
+from PIL import Image
 
 def xavier_init(module, gain=1, bias=0, distribution='normal'):
     assert distribution in ['uniform', 'normal']
@@ -43,8 +43,7 @@ class ResnetEncoder(nn.Module):
         super(ResnetEncoder, self).__init__()
 
         self.num_layers = params['depth']
-        self.pretrained = params['pretrained']
-        self.output_indices = params['output_indices']
+        self.output_indices = params['out_indices']
 
         resnets = {18: models.resnet18,
                    34: models.resnet34,
@@ -57,7 +56,7 @@ class ResnetEncoder(nn.Module):
                 "{} is not a valid number of resnet "
                 "layers".format(self.num_layers))
 
-        self.encoder = resnets[self.num_layers](self.pretrained)
+        self.encoder = resnets[self.num_layers](False)
 
     def forward(self, input_images):
         """
@@ -331,3 +330,92 @@ class FFN(nn.Module):
         if identity is None:
             identity = x
         return identity + self.dropout_layer(out)
+
+
+class GridMask(nn.Module):
+    def __init__(self, use_h, use_w, rotate=1, offset=False, ratio=0.5, mode=0,
+                 prob=1.):
+        """Initialize the GridMask.
+
+        The GridMask applies a random mask to the input image, where regions of the image are
+        blacked out to create a transformed image. The size and shape of the blacked out regions,
+        as well as the probability of applying the mask, can be controlled through the input parameters.
+
+        Args:
+            use_h (bool): If True, masking will be applied horizontally.
+            use_w (bool): If True, masking will be applied vertically.
+            rotate (int): Number of possible rotation angles for the mask.
+            offset (bool): If True, a random offset will be added to the masked image.
+            ratio (float): The ratio of the length of the masked region to the size of each grid.
+            mode (int): 0 to mask the region, 1 to unmask the region.
+            prob (float): Probability of applying the mask.
+        """
+        super(GridMask, self).__init__()
+        self.use_h = use_h
+        self.use_w = use_w
+        self.rotate = rotate
+        self.offset = offset
+        self.ratio = ratio
+        self.mode = mode
+        self.st_prob = prob
+        self.prob = prob
+
+    def set_prob(self, epoch, max_epoch):
+        """Set the probability of applying the mask based on the current epoch.
+
+        Args:
+            epoch (int): The current epoch number.
+            max_epoch (int): The total number of epochs.
+        """
+        self.prob = self.st_prob * epoch / max_epoch  # + 1.#0.5
+
+    def forward(self, x):
+        """Apply the GridMask to the input image.
+
+        Args:
+            x (Tensor): The input image.
+
+        Returns:
+            Tensor: The transformed image.
+        """
+        if np.random.rand() > self.prob or not self.training:
+            return x
+        n, c, h, w = x.size()
+        x = x.view(-1, h, w)
+        hh = int(1.5 * h)
+        ww = int(1.5 * w)
+        d = np.random.randint(2, h)
+        self.l = min(max(int(d * self.ratio + 0.5), 1), d - 1)
+        mask = np.ones((hh, ww), np.float32)
+        st_h = np.random.randint(d)
+        st_w = np.random.randint(d)
+        if self.use_h:
+            for i in range(hh // d):
+                s = d * i + st_h
+                t = min(s + self.l, hh)
+                mask[s:t, :] *= 0
+        if self.use_w:
+            for i in range(ww // d):
+                s = d * i + st_w
+                t = min(s + self.l, ww)
+                mask[:, s:t] *= 0
+
+        r = np.random.randint(self.rotate)
+        mask = Image.fromarray(np.uint8(mask))
+        mask = mask.rotate(r)
+        mask = np.asarray(mask)
+        mask = mask[(hh - h) // 2:(hh - h) // 2 + h,
+               (ww - w) // 2:(ww - w) // 2 + w]
+
+        mask = torch.from_numpy(mask).float().cuda()
+        if self.mode == 1:
+            mask = 1 - mask
+        mask = mask.expand_as(x)
+        if self.offset:
+            offset = torch.from_numpy(
+                2 * (np.random.rand(h, w) - 0.5)).float().cuda()
+            x = x * mask + offset * (1 - mask)
+        else:
+            x = x * mask
+
+        return x.view(n, c, h, w)

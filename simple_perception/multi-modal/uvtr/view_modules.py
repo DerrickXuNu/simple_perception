@@ -240,9 +240,7 @@ class Uni3DViewTrans(nn.Module):
                               stride=1,
                               padding=padding,
                               bias=True),
-                    norm_op(embed_dims) if "GN" not in norm_cfg[
-                        "type"] else norm_op(norm_cfg["num_groups"],
-                                             embed_dims),
+                    nn.BatchNorm3d(embed_dims),
                     nn.ReLU(inplace=True))
             # conv_trans_head_x
             self.add_module("{}_head_{}".format('conv_trans', k + 1), conv)
@@ -346,7 +344,7 @@ class Uni3DViewTrans(nn.Module):
         return voxel_space
 
 
-class Uni3DDepthProj(nn.Module()):
+class Uni3DDepthProj(nn.Module):
     """Depth project module used in UVTR.
     """
 
@@ -358,7 +356,8 @@ class Uni3DDepthProj(nn.Module()):
                  num_sweeps=1,  # lengh of sequence
                  pc_range=None,  # the camera bev range
                  voxel_shape=None,  # voxelization resolution
-                 device='cuda'):
+                 device='cuda',
+                 **kwargs):
         super(Uni3DDepthProj, self).__init__()
 
         self.device = device
@@ -371,9 +370,9 @@ class Uni3DDepthProj(nn.Module()):
         self.num_sweeps = num_sweeps
 
         # build voxel space with X,Y,Z
-        _width = torch.linspace(0, 1, self.voxel_shape[0], device=self.device)
-        _hight = torch.linspace(0, 1, self.voxel_shape[1], device=self.device)
-        _depth = torch.linspace(0, 1, self.voxel_shape[2], device=self.device)
+        _width = torch.linspace(0, 1, self.voxel_shape[0])
+        _hight = torch.linspace(0, 1, self.voxel_shape[1])
+        _depth = torch.linspace(0, 1, self.voxel_shape[2])
         # h, w, depth_sampling, 3
         self.reference_voxel = torch.stack(
             torch.meshgrid([_width, _hight, _depth]), dim=-1)
@@ -384,6 +383,8 @@ class Uni3DDepthProj(nn.Module()):
         bs = kwargs.get('batch_size', 1)
         num_sweep = kwargs.get('num_sweep', 1)
         num_cam = kwargs.get('num_cam', 6)
+        device = mlvl_feats[0].device
+        self.reference_voxel = self.reference_voxel.to(device)
 
         # bs, h, w, depth_sampling, 3
         reference_voxel = self.reference_voxel.unsqueeze(0).repeat(bs, 1, 1, 1,
