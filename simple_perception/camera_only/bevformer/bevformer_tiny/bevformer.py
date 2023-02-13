@@ -228,6 +228,7 @@ if __name__ == '__main__':
     loss = bevformer(train=True, **data_dict)
     # During test
     # [(300 * 9), (300,), (300,)]
+    bevformer.eval()
     output_list = bevformer(train=False, **data_dict)
 
 

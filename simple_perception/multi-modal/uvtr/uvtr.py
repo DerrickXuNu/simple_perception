@@ -2,6 +2,7 @@
 UVTR model that contains image backbone, neck, viewtrans, and lidar backbone
 """
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import torch
 import torch.nn as nn
 
@@ -41,7 +42,7 @@ class UVTR(nn.Module):
             self.pts_bbox_head = UVTRHead(**pts_bbox_head)
         # image backbone
         if img_backbone:
-            self.image_backbone = ResnetEncoder(img_backbone)
+            self.img_backbone = ResnetEncoder(img_backbone)
         # image neck for feature augmentation
         if img_neck:
             self.img_neck = FPN(**img_neck)
@@ -82,6 +83,10 @@ class UVTR(nn.Module):
     def with_img_backbone(self):
         """bool: Whether the detector has a 2D image backbone."""
         return hasattr(self, 'img_backbone') and self.img_backbone is not None
+
+    def with_img_neck(self):
+        """bool: Whether the detector has a 2D image backbone."""
+        return hasattr(self, 'img_neck') and self.img_neck is not None
 
     def extract_img_feat(self, img, img_metas):
         """Extract features of images.
@@ -242,22 +247,26 @@ if __name__ == '__main__':
     # mocked input image and gt
     batch_size = 1
     n_gt = 32
-    len_queue = 3
+    len_queue = 1
     num_camera = 6
+    h, w = 928, 1600
 
-    imgs = torch.rand(batch_size, num_camera, 3, 928, 1600)
+    imgs = torch.rand(batch_size, num_camera, 3, h, w)
     # regression, cx, cy, cz, w, l, h, rot, vx, vy
     gt_bboxes_3d = [torch.rand(n_gt, 9)] * batch_size
     # 10 classes
     gt_labels_list = [torch.randint(0, 10, (n_gt,))] * batch_size
-    img_metas = [img_metas * len_queue] * batch_size
+    # update the image shape meta
+    img_metas.update({'img_shape': [(h, w, 3)] * num_camera})
+    img_metas = [img_metas] * batch_size
 
     data_dict = {
         'img_metas': img_metas,
         'img': imgs,
         'gt_bboxes_3d': gt_bboxes_3d,
-        'gt_labels_3d': gt_labels_list
+        'gt_labels_3d': gt_labels_list,
     }
 
     uvtr_camera = UVTR(**camera_config)
+    loss = uvtr_camera(train=True, **data_dict)
     print('here')

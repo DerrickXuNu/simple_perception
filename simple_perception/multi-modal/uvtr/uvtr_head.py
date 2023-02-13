@@ -500,9 +500,10 @@ class UVTRHead(nn.Module):
     def loss(self,
              gt_bboxes_list,
              gt_labels_list,
+             gt_depth_prob,
+             gt_depth_coord,
              preds_dicts,
-             gt_bboxes_ignore=None,
-             img_metas=None):
+             gt_bboxes_ignore=None):
         """"Loss function.
         Args:
 

@@ -191,7 +191,7 @@ class FPN(nn.Module):
         for i in range(self.start_level, self.backbone_end_level):
             l_conv = nn.Conv2d(in_channels[i], out_channels, kernel_size=3,
                                stride=1, padding=1)
-            fpn_conv = nn.Conv2d(in_channels[i], out_channels, kernel_size=3,
+            fpn_conv = nn.Conv2d(out_channels, out_channels, kernel_size=3,
                                stride=1, padding=1)
             self.lateral_convs.append(l_conv)
             self.fpn_convs.append(fpn_conv)
@@ -407,7 +407,7 @@ class GridMask(nn.Module):
         mask = mask[(hh - h) // 2:(hh - h) // 2 + h,
                (ww - w) // 2:(ww - w) // 2 + w]
 
-        mask = torch.from_numpy(mask).float().cuda()
+        mask = torch.from_numpy(mask).float().to(x.device)
         if self.mode == 1:
             mask = 1 - mask
         mask = mask.expand_as(x)

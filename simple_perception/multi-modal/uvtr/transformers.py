@@ -333,6 +333,9 @@ class Uni3DDETR(nn.Module):
         self.num_cams = num_cams
         self.two_stage_num_proposals = two_stage_num_proposals
 
+        self.init_layers()
+        self.init_weights()
+
     def init_layers(self):
         self.reference_points = nn.Linear(self.embed_dims, 3)
 
@@ -384,4 +387,4 @@ class Uni3DDETR(nn.Module):
             **kwargs)
 
         inter_references_out = inter_references.sigmoid()
-        return inter_states, inter_references, inter_references_out
+        return inter_states, init_reference_out, inter_references_out

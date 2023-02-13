@@ -93,7 +93,7 @@ def feature_sampling(mlvl_feats,
         torch.ones_like(reference_voxel_cam[..., 2:3]) * 1e-5)
 
     # transfer if have image-level augmentation
-    # todo: not explore train yet
+
     if len(img_rot_aug) > 0:
         img_rot_aug = torch.stack(img_rot_aug, dim=0).to(reference_voxel_cam)
         reference_voxel_cam = reference_voxel_cam @ img_rot_aug
