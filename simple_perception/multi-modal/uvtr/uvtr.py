@@ -224,11 +224,25 @@ class UVTR(nn.Module):
 
         return losses
 
+    def forward_test(self, img_metas, points=None, img=None, rescale=False,
+                     **kwargs):
+        # feature extraction
+        pts_feat, img_feats, img_depth = self.extract_feat(points=points,
+                                                           img=img,
+                                                           img_metas=img_metas)
+        # view transfer + decoder
+        outs = self.pts_bbox_head(pts_feat, img_feats, img_metas, img_depth)
+        # bbx_prediction (n, 9), bbx confidence score (n,), bbx_label (n, )
+        bbox_list = self.pts_bbox_head.get_bboxes(
+            outs, img_metas, rescale=rescale)
+
+        return bbox_list
+
     def forward(self, train=True, **kwargs):
         if train:
             return self.forward_train(**kwargs)
         else:
-            return self.forward_train(**kwargs)
+            return self.forward_test(**kwargs)
 
 
 if __name__ == '__main__':
@@ -269,4 +283,7 @@ if __name__ == '__main__':
 
     uvtr_camera = UVTR(**camera_config)
     loss = uvtr_camera(train=True, **data_dict)
-    print('here')
+    print('loss done')
+
+    out = uvtr_camera(train=False, **data_dict)
+    print('test done')
