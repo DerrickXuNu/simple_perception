@@ -29,6 +29,11 @@ git clone https://github.com/DerrickXuNu/simple_perception
 cd simple_perception
 pip install .
 ```
+(optional) **spconv**:
+You will need to additinally install spconv if you are playing with LiDAR detection. I found spconv-cpu version can cause bugs, so please install the spconv cuda version based on your cuda:
+```commandline
+pip install spconv-cu113
+```
 
 ## Usage
 ### BEVFormer
