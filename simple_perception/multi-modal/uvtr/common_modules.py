@@ -419,3 +419,4 @@ class GridMask(nn.Module):
             x = x * mask
 
         return x.view(n, c, h, w)
+
